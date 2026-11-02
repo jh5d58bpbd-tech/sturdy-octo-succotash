@@ -5,6 +5,7 @@
   python3 tools/quote.py search <キーワード...>   品名・規格・コード・カテゴリを検索
   python3 tools/quote.py check                    マスタの重複・欠損チェック
   python3 tools/quote.py calc <明細.json>         見積計算
+  python3 tools/quote.py genka <キーワード...>    メーカー定価と仕入値（卸値・掛率）を検索
 
 明細 JSON の例:
 {
@@ -148,6 +149,45 @@ def cmd_calc(path):
     return out
 
 
+def _read(name):
+    p = ROOT / "data" / name
+    if not p.exists():
+        return []
+    with p.open(encoding="utf-8-sig", newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def cmd_genka(words):
+    words = [w.lower() for w in words]
+    shiire = _read("shiire.csv")
+    by_id = {r["ID"]: r for r in shiire}
+    match = lambda r, cols: all(w in " ".join(r.get(c, "") or "" for c in cols).lower() for w in words)
+    print("【メーカー定価（カタログ）→ 仕入値】")
+    n = 0
+    for r in _read("catalog.csv"):
+        if not match(r, ("メーカー", "シリーズ", "品番", "品名")):
+            continue
+        n += 1
+        ref = by_id.get(r.get("仕入掛率ID", ""))
+        cost = ""
+        if ref and ref.get("掛率") not in ("", "0"):
+            cost = f" × {ref['掛率']}% = 仕入 {Decimal(r['定価']) * Decimal(ref['掛率']) / 100:,.1f}円"
+        elif not ref:
+            cost = " （掛率未登録）"
+        print(f"{r['メーカー']} {r['シリーズ']} {r['品番']} {r['厚み']}  定価 {int(r['定価']):,}円/{r['単位']}{cost}"
+              + (f"  ※{r['備考']}" if r.get("備考") else ""))
+    print("【仕入表（卸値・掛率）】")
+    for r in shiire:
+        if not match(r, ("メーカー", "カテゴリ", "品名", "規格")):
+            continue
+        n += 1
+        v = f"{int(r['仕入単価']):,}円/{r['単位']}" if r["仕入単価"] not in ("",) else (f"掛率 {r['掛率']}%" if r["掛率"] else "-")
+        j = f" 上代{int(r['上代']):,}円" if r.get("上代") else ""
+        print(f"{r['ID']} {r['メーカー']} {r['品名']} {r['規格']}  {v}{j}  [{r['仕入先']} {r['適用日']}~]"
+              + (f"  ※{r['備考']}" if r.get("備考") else ""))
+    print(f"-- {n} 件", file=sys.stderr)
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -155,6 +195,8 @@ def main():
     cmd, args = sys.argv[1], sys.argv[2:]
     if cmd == "search":
         cmd_search(args)
+    elif cmd == "genka":
+        cmd_genka(args)
     elif cmd == "check":
         cmd_check()
     elif cmd == "calc" and args:
