@@ -15,9 +15,13 @@
     {"コード": "A-001", "数量": 3},
     {"コード": "A-002", "数量": 1, "単価": 5000},
     {"品名": "出張費", "数量": 1, "単位": "式", "単価": 8000},
-    {"品名": "値引", "数量": 1, "単位": "式", "単価": -3000}
-  ]
+    {"品名": "値引", "数量": 1, "単位": "式", "単価": -3000},
+    {"見出し": "2.〇〇工事"}, {"注記": "※注意書き"}, {"空行": true}
+  ],
+  "端数調整単位": 10000
 }
+行の種類: 明細（コード or 品名）/ {"見出し": ..} / {"注記": ..} / {"空行": true}
+"端数調整単位" を書くと小計をその単位で切り捨て、差額を「端数調整」行で入れる。
 コード指定の行はマスタから品名・単位・単価を引く。"単価" を書けばそれで上書き。
 """
 import csv
@@ -83,8 +87,16 @@ def cmd_calc(path):
     spec = json.loads(Path(path).read_text(encoding="utf-8"))
     master = {r["コード"]: r for r in load_prices()}
     rate = Decimal(str(spec.get("税率", "0.10")))
-    lines, subtotal, errors = [], Decimal(0), []
-    for n, item in enumerate(spec["明細"], start=1):
+    lines, subtotal, errors, n = [], Decimal(0), [], 0
+    for item in spec["明細"]:
+        # 金額を持たない行（見出し・注記・空行）
+        if "見出し" in item:
+            lines.append({"種別": "見出し", "品名": item["見出し"]}); continue
+        if "注記" in item:
+            lines.append({"種別": "注記", "品名": item["注記"]}); continue
+        if item.get("空行"):
+            lines.append({"種別": "空行"}); continue
+        n += 1
         m = master.get(item.get("コード", ""), {})
         if item.get("コード") and not m:
             errors.append(f"{n}行目: コード {item['コード']} がマスタにありません")
@@ -97,22 +109,35 @@ def cmd_calc(path):
         amount = yen(price * qty)
         subtotal += amount
         lines.append({
-            "No": n,
+            "種別": "明細",
             "コード": item.get("コード", ""),
             "品名": item.get("品名", m.get("品名", "")),
             "規格": item.get("規格", m.get("規格", "")),
-            "数量": str(qty.normalize()),
+            "数量": format(qty.normalize(), "f"),
             "単位": item.get("単位", m.get("単位", "")),
             "単価": int(price),
             "金額": int(amount),
         })
+    # 端数調整: 小計を指定単位で切り捨てて差額を「端数調整」行にする
+    unit = spec.get("端数調整単位")
+    if unit:
+        rounded = (subtotal // Decimal(unit)) * Decimal(unit)
+        diff = rounded - subtotal
+        if diff:
+            lines.append({"種別": "明細", "品名": "端数調整", "規格": "", "数量": "", "単位": "",
+                          "単価": None, "金額": int(diff)})
+            subtotal = rounded
     tax = yen(subtotal * rate)
     total = subtotal + tax
     result = {**{k: v for k, v in spec.items() if k != "明細"},
               "明細": lines, "小計": int(subtotal), "消費税": int(tax), "合計": int(total)}
 
     for l in lines:
-        print(f"{l['No']:>2} {l['品名']} {l['規格']}  {l['数量']}{l['単位']} × {fmt(l['単価'])} = {fmt(l['金額'])}")
+        if l["種別"] == "明細":
+            q = f"{l['数量']}{l['単位']} × {fmt(l['単価'])} = " if l["単価"] is not None else ""
+            print(f"   {l['品名']} {l['規格']}  {q}{fmt(l['金額'])}")
+        elif l["種別"] != "空行":
+            print(f"■ {l['品名']}")
     print(f"小計 {fmt(subtotal)} / 消費税({rate*100:.0f}%) {fmt(tax)} / 合計 {fmt(total)} 円")
     for e in errors:
         print("警告:", e, file=sys.stderr)
@@ -120,6 +145,7 @@ def cmd_calc(path):
     out = Path(path).with_suffix(".result.json")
     out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"→ {out}")
+    return out
 
 
 def main():
