@@ -17,6 +17,7 @@
     {"コード": "A-002", "数量": 1, "単価": 5000},
     {"品名": "出張費", "数量": 1, "単位": "式", "単価": 8000},
     {"品名": "値引", "数量": 1, "単位": "式", "単価": -3000},
+    {"品番": "PX-570", "数量": 353},   ← カタログ品番: 仕入/㎡＋手間2,000→100円切上げで単価自動（"手間" で上書き可）
     {"見出し": "2.〇〇工事"}, {"注記": "※注意書き"}, {"空行": true}
   ],
   "端数調整単位": 10000
@@ -28,11 +29,13 @@
 import csv
 import json
 import sys
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal, ROUND_DOWN, ROUND_CEILING
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PRICES = ROOT / "data" / "prices.csv"
+TEMA_M2 = Decimal(2000)      # 床シート材工の手間（円/㎡）ユーザー指定
+ROUND_UP = Decimal(100)      # 材工単価の切り上げ単位（円）
 COLUMNS = ["コード", "品名", "規格", "単位", "単価", "カテゴリ", "出典", "備考"]
 
 
@@ -98,7 +101,18 @@ def cmd_calc(path):
         if item.get("空行"):
             lines.append({"種別": "空行"}); continue
         n += 1
-        m = master.get(item.get("コード", ""), {})
+        if item.get("品番"):
+            # カタログ品番から材工単価を自動計算: 仕入(定価×掛率)/㎡ + 手間 → 100円切り上げ
+            info = material_price(item["品番"], item.get("手間"))
+            if not info:
+                errors.append(f"{n}行目: 品番 {item['品番']} の㎡単価・掛率が見つかりません")
+                m = {}
+            else:
+                m = {"品名": "長尺シート張り", "規格": info["規格"], "単位": "㎡", "単価": info["単価"]}
+                print(f"   [{item['品番']}] 定価{info['定価']:,}×{info['掛率']}%={info['仕入']:,.1f} + 手間{info['手間']:,} "
+                      f"= {info['計算値']:,.1f} → {info['単価']:,}円/㎡")
+        else:
+            m = master.get(item.get("コード", ""), {})
         if item.get("コード") and not m:
             errors.append(f"{n}行目: コード {item['コード']} がマスタにありません")
         price = item.get("単価", m.get("単価"))
@@ -157,6 +171,26 @@ def _read(name):
         return list(csv.DictReader(f))
 
 
+def ceil_to(v, unit=ROUND_UP):
+    return int((Decimal(v) / unit).to_integral_value(rounding=ROUND_CEILING) * unit)
+
+
+def material_price(code, tema=None):
+    """品番(例 PX-570) の ㎡ 行から 仕入値と材工単価を求める"""
+    by_id = {r["ID"]: r for r in _read("shiire.csv")}
+    for r in _read("catalog.csv"):
+        if r["品番"] == code and r["単位"] == "㎡":
+            ref = by_id.get(r.get("仕入掛率ID", ""))
+            if not ref or ref.get("掛率") in ("", "0"):
+                return None
+            cost = Decimal(r["定価"]) * Decimal(ref["掛率"]) / 100
+            t = Decimal(str(tema)) if tema is not None else TEMA_M2
+            return {"定価": int(r["定価"]), "掛率": ref["掛率"], "仕入": cost, "手間": int(t),
+                    "計算値": cost + t, "単価": ceil_to(cost + t),
+                    "規格": f"{r['メーカー']} {r['シリーズ']} {code} {r['厚み']}"}
+    return None
+
+
 def cmd_genka(words):
     words = [w.lower() for w in words]
     shiire = _read("shiire.csv")
@@ -172,6 +206,9 @@ def cmd_genka(words):
         cost = ""
         if ref and ref.get("掛率") not in ("", "0"):
             cost = f" × {ref['掛率']}% = 仕入 {Decimal(r['定価']) * Decimal(ref['掛率']) / 100:,.1f}円"
+            if r["単位"] == "㎡":
+                v = Decimal(r["定価"]) * Decimal(ref["掛率"]) / 100 + TEMA_M2
+                cost += f" ＋手間{int(TEMA_M2):,} = 材工{v:,.1f} → 見積単価 {ceil_to(v):,}円/㎡"
         elif not ref:
             cost = " （掛率未登録）"
         print(f"{r['メーカー']} {r['シリーズ']} {r['品番']} {r['厚み']}  定価 {int(r['定価']):,}円/{r['単位']}{cost}"
