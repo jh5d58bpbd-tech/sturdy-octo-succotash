@@ -184,7 +184,7 @@ def material_price(code, tema=None):
     """品番(例 PX-570) の ㎡ 行から 仕入値と材工単価を求める"""
     by_id = {r["ID"]: r for r in _read("shiire.csv")}
     for r in _read("catalog.csv"):
-        if r["品番"] == code and r["単位"] in TEMA:
+        if r["品番"] == code and r["単位"] in TEMA and r["シリーズ"].startswith("ノンスキッド"):
             ref = by_id.get(r.get("仕入掛率ID", ""))
             if not ref or ref.get("掛率") in ("", "0"):
                 return None
@@ -211,7 +211,7 @@ def cmd_genka(words):
         cost = ""
         if ref and ref.get("掛率") not in ("", "0"):
             cost = f" × {ref['掛率']}% = 仕入 {Decimal(r['定価']) * Decimal(ref['掛率']) / 100:,.1f}円"
-            if r["単位"] in TEMA:
+            if r["単位"] in TEMA and r["シリーズ"].startswith("ノンスキッド"):
                 t = TEMA[r["単位"]]
                 v = Decimal(r["定価"]) * Decimal(ref["掛率"]) / 100 + t
                 cost += f" ＋手間{int(t):,} = 材工{v:,.1f} → 見積単価 {ceil_to(v):,}円/{r['単位']}"
