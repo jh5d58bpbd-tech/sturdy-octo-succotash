@@ -35,6 +35,10 @@ def render(res):
     if co.get("角印") and (ROOT / co["角印"]).exists():
         b64 = base64.b64encode((ROOT / co["角印"]).read_bytes()).decode()
         seal = f'<img class="seal" src="data:image/png;base64,{b64}">'
+    stamp = ""
+    if co.get("丸印") and (ROOT / co["丸印"]).exists():
+        b64 = base64.b64encode((ROOT / co["丸印"]).read_bytes()).decode()
+        stamp = f'<img src="data:image/png;base64,{b64}">'
 
     rows = []
     for l in res["明細"]:
@@ -90,6 +94,8 @@ h1 {{ margin:0 auto; width:68mm; background:var(--blue); color:#fff; text-align:
 .stamps {{ display:flex; justify-content:flex-end; margin-top:9mm; }}
 .stamps div {{ width:19mm; height:19mm; border:1px solid var(--blue); }}
 .stamps div + div {{ border-left:none; }}
+.stamps div {{ display:flex; align-items:center; justify-content:center; }}
+.stamps img {{ width:11mm; opacity:.9; }}
 table {{ border-collapse:collapse; width:100%; }}
 .sum {{ margin-top:3mm; border:2px solid var(--blue); }}
 .sum th {{ background:var(--head); color:var(--blue); font-weight:normal; font-size:8pt; letter-spacing:.6em;
@@ -122,7 +128,7 @@ table {{ border-collapse:collapse; width:100%; }}
   <div class="date">{wareki_free(res.get('日付', date.today().isoformat()))}</div>
   <div class="co">{seal}<div class="nm">{e(co['会社名'])}</div>
    〒{e(co['郵便番号'])} {e(co['住所1'])}<br>{e(co['住所2'])}<br>TEL{e(co['TEL'])}<br>(登録番号 {e(co['登録番号'])})</div>
-  <div class="stamps"><div></div><div></div></div>
+  <div class="stamps"><div>{stamp}</div><div></div></div>
  </div>
 </div>
 <table class="sum"><tr><th>小計</th><th>消費税</th><th>合計金額</th></tr>
